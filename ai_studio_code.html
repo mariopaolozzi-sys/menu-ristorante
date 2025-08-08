@@ -1,0 +1,542 @@
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beach Restaurant - Sistema di Ordinazione</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f9ff; }
+        .card { transition: all 0.3s ease; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .modal { transition: opacity 0.3s ease; }
+        .badge { position: absolute; top: -8px; right: -8px; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        
+        #toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 12px 20px; border-radius: 8px; color: white; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transform: translateX(100%); animation: slideIn 0.5s forwards, fadeOut 0.5s 4s forwards; }
+        .toast.success { background-color: #28a745; }
+        .toast.error { background-color: #dc3545; }
+        @keyframes slideIn { to { opacity: 1; transform: translateX(0); } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; transform: translateX(100%); } }
+
+        @media print {
+            body * { visibility: hidden; }
+            #qrCodePrintArea, #qrCodePrintArea * { visibility: visible; }
+            #qrCodePrintArea { position: absolute; left: 0; top: 0; width: 100%; }
+            .qr-container { page-break-inside: avoid; text-align: center; border: 1px solid #ccc; padding: 10px; margin: 10px; display: inline-block; }
+            .qr-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-white shadow-md sticky top-0 z-40">
+            <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+                <h1 class="text-2xl font-bold text-gray-800">🏖️ Beach Restaurant</h1>
+                <div class="flex items-center space-x-4">
+                    <button id="adminBtn" class="relative text-gray-600 hover:text-sky-500"><span class="text-2xl">⚙️</span><span id="adminBadge" class="badge hidden bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">0</span></button>
+                    <button id="scanBtn" class="text-gray-600 hover:text-sky-500"><span class="text-2xl">📱</span></button>
+                    <button id="cartBtn" class="relative text-gray-600 hover:text-sky-500"><span class="text-2xl">🛒</span><span id="cartBadge" class="badge hidden bg-sky-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">0</span></button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="container mx-auto px-4 py-6">
+            <!-- Location Selection -->
+            <section id="locationSection">
+                <h2 class="text-2xl font-semibold mb-4">Seleziona la tua posizione</h2>
+                <div class="flex border-b mb-4">
+                    <button id="tableTab" class="py-2 px-4 text-sky-600 border-b-2 border-sky-500 font-medium">Tavoli</button>
+                    <button id="umbrellaTab" class="py-2 px-4 text-gray-500 font-medium">Ombrelloni</button>
+                </div>
+                <div id="locationsGrid" class="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-8 gap-3 mb-6"></div>
+                <div class="text-center">
+                    <button id="scanLocationBtn" class="bg-sky-100 text-sky-700 px-4 py-2 rounded-lg hover:bg-sky-200">📱 Scansiona QR Code</button>
+                </div>
+            </section>
+
+            <!-- Menu Section -->
+            <section id="menuSection" class="hidden">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-semibold">Menu</h2>
+                    <div class="text-sm text-gray-600">
+                        <span id="locationInfo"></span>
+                        <button id="changeLocationBtn" class="ml-2 text-sky-500">🔄 Cambia</button>
+                    </div>
+                </div>
+                <div id="categoriesContainer" class="flex space-x-2 mb-6 overflow-x-auto pb-2"></div>
+                <div id="menuItemsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+            </section>
+
+            <!-- QR Scanner Section -->
+            <section id="scannerSection" class="hidden">
+                <div class="flex justify-between items-center mb-4"><h2 class="text-2xl font-semibold">Scansiona QR Code</h2><button id="closeScannerBtn" class="text-gray-400 hover:text-gray-600">❌</button></div>
+                <div class="bg-white rounded-lg p-4 max-w-md mx-auto">
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                        <h4 class="font-medium text-blue-800 mb-2">📱 Come usare lo scanner:</h4>
+                        <ol class="text-sm text-blue-700 space-y-1 list-decimal list-inside">
+                            <li>Clicca "Avvia Scanner"</li><li>Consenti l'accesso alla fotocamera</li><li>Inquadra il QR code nel riquadro</li><li>Attendi la lettura automatica</li>
+                        </ol>
+                    </div>
+                    <div id="qrReader" class="mb-4 w-full border rounded-lg overflow-hidden"></div>
+                    <div id="scanMessage" class="text-center text-sm text-gray-600 mb-4 h-5">Clicca "Avvia Scanner" per iniziare</div>
+                    <div class="flex justify-center space-x-4">
+                        <button id="startScanBtn" class="bg-sky-500 text-white px-4 py-2 rounded">Avvia Scanner</button>
+                        <input type="file" id="fileInput" accept="image/*" class="hidden">
+                        <button id="uploadBtn" class="bg-gray-500 text-white px-4 py-2 rounded">Carica Foto</button>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg p-4 max-w-md mx-auto mt-4">
+                    <h3 class="font-semibold mb-2">Inserimento Manuale</h3>
+                    <div class="flex space-x-2 mb-2">
+                        <select id="manualType" class="flex-1 px-3 py-2 border rounded"><option value="table">Tavolo</option><option value="umbrella">Ombrellone</option></select>
+                        <input type="number" id="manualNumber" min="1" value="1" class="flex-1 px-3 py-2 border rounded">
+                    </div>
+                    <button id="manualSubmitBtn" class="w-full bg-sky-500 text-white py-2 rounded">Conferma</button>
+                </div>
+                <div class="text-center mt-6">
+                    <h3 class="font-semibold mb-2">QR Code di Test</h3>
+                    <div id="testQrCode" class="inline-block bg-white p-4 rounded shadow"></div>
+                    <p class="text-sm text-gray-500 mt-2">Screenshot questo QR per testare (Tavolo 5)</p>
+                </div>
+            </section>
+        </main>
+
+        <!-- Modals -->
+        <div id="cartModal" class="modal fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center"><div class="bg-white rounded-lg w-full max-w-md shadow-xl"><div class="flex justify-between items-center p-4 border-b"><h3 class="text-xl font-semibold">Il tuo ordine</h3><button id="closeCartBtn" class="text-gray-400 hover:text-gray-600">❌</button></div><div class="p-4 max-h-96 overflow-y-auto"><div id="cartItems" class="space-y-3"></div><div class="mt-4"><textarea id="orderNotes" class="w-full px-3 py-2 border rounded" rows="2" placeholder="Note speciali..."></textarea></div></div><div class="p-4 border-t bg-gray-50"><div class="flex justify-between items-center mb-4"><span class="font-semibold">Totale:</span><span id="cartTotal" class="font-bold text-sky-600 text-xl">0 L</span></div><div class="space-y-2"><button id="sendOrderBtn" class="w-full bg-sky-500 text-white py-2 rounded hover:bg-sky-600">Invia Ordine</button><button id="whatsappBtn" class="w-full bg-green-500 text-white py-2 rounded hover:bg-green-600 flex items-center justify-center gap-2">📱 Ordina su WhatsApp</button></div></div></div></div>
+        <div id="adminModal" class="modal fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center"><div class="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-xl"><div class="flex justify-between items-center p-4 border-b"><h3 class="text-xl font-semibold">Pannello Admin</h3><button id="closeAdminBtn" class="text-gray-400 hover:text-gray-600">❌</button></div><div class="flex border-b overflow-x-auto"><button data-tab="settingsTab" class="admin-tab py-3 px-4 font-medium text-sky-600 border-b-2 border-sky-500 flex-shrink-0">Impostazioni</button><button data-tab="productsTab" class="admin-tab py-3 px-4 font-medium text-gray-500 flex-shrink-0">Prodotti</button><button data-tab="ordersTab" class="admin-tab py-3 px-4 font-medium text-gray-500 relative flex-shrink-0">Ordini<span id="ordersTabBadge" class="badge hidden bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">0</span></button><button data-tab="tableOrdersTab" class="admin-tab py-3 px-4 font-medium text-gray-500 flex-shrink-0">Ordini per Tavolo</button><button data-tab="categoriesTab" class="admin-tab py-3 px-4 font-medium text-gray-500 flex-shrink-0">Categorie</button><button data-tab="historyTab" class="admin-tab py-3 px-4 font-medium text-gray-500 flex-shrink-0">Storico Ordini</button><button data-tab="qrCodeTab" class="admin-tab py-3 px-4 font-medium text-gray-500 flex-shrink-0">Codici QR</button></div><div class="p-4 overflow-y-auto flex-grow bg-gray-50"><div id="settingsTab" class="admin-tab-content"><div class="bg-white p-4 rounded-lg shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"><div><label class="block text-sm font-medium mb-1">Nome Locale</label><input id="restaurantName" type="text" class="w-full px-3 py-2 border rounded"></div><div><label class="block text-sm font-medium mb-1">Valuta</label><select id="currency" class="w-full px-3 py-2 border rounded"><option value="€">Euro (€)</option><option value="$">Dollaro ($)</option><option value="L">Lek (L)</option></select></div><div><label class="block text-sm font-medium mb-1">Numero Tavoli</label><input id="tableCount" type="number" min="1" class="w-full px-3 py-2 border rounded"></div><div><label class="block text-sm font-medium mb-1">Numero Ombrelloni</label><input id="umbrellaCount" type="number" min="1" class="w-full px-3 py-2 border rounded"></div><div class="md:col-span-2"><label class="block text-sm font-medium mb-1">Numero WhatsApp (con prefisso internazionale)</label><input id="whatsappNumber" type="text" class="w-full px-3 py-2 border rounded" placeholder="Es. 393331234567"></div></div><button id="saveSettingsBtn" class="bg-sky-500 text-white px-4 py-2 rounded">Salva Impostazioni</button></div><div id="productsTab" class="admin-tab-content hidden"><div class="flex justify-between items-center mb-4"><h4 class="font-medium text-xl">Gestione Prodotti</h4><button id="addProductBtn" class="bg-sky-100 text-sky-700 px-3 py-1 rounded hover:bg-sky-200">➕ Aggiungi Prodotto</button></div><div class="mb-4 bg-white p-3 rounded-lg shadow-sm"><label class="block text-sm font-medium mb-2">Filtra per categoria:</label><div id="categoryFilter" class="flex flex-wrap gap-2"></div></div><div id="productsList" class="space-y-2"></div></div><div id="ordersTab" class="admin-tab-content hidden"><div class="flex border-b mb-4 bg-white rounded-t-lg"><button data-subtab="kitchen" class="order-type-tab py-2 px-4 font-medium text-sky-600 border-b-2 border-sky-500 relative">Cucina<span id="kitchenBadge" class="badge hidden bg-red-500 text-white text-xs rounded-full h-4 w-4">0</span></button><button data-subtab="bar" class="order-type-tab py-2 px-4 font-medium text-gray-500 relative">Bar<span id="barBadge" class="badge hidden bg-red-500 text-white text-xs rounded-full h-4 w-4">0</span></button></div><div id="ordersListKitchen" class="order-type-content space-y-4"></div><div id="ordersListBar" class="order-type-content hidden space-y-4"></div></div><div id="tableOrdersTab" class="admin-tab-content hidden"><div class="bg-white rounded-lg p-4 mb-4 shadow-sm"><h4 class="font-medium mb-4">Cerca Tavolo/Ombrellone</h4><div class="flex space-x-4"><select id="searchType" class="flex-1 px-3 py-2 border rounded"><option value="table">Tavolo</option><option value="umbrella">Ombrellone</option></select><input type="number" id="searchNumber" min="1" class="flex-1 px-3 py-2 border rounded" placeholder="Numero"><button id="searchBtn" class="bg-sky-500 text-white px-4 py-2 rounded">Cerca</button></div></div><div id="searchResults" class="hidden bg-white rounded-lg p-4 mb-4 shadow-sm"><div class="flex justify-between items-center mb-4"><h4 id="searchResultTitle" class="text-lg font-semibold"></h4><div class="space-x-2"><button id="markPaidBtn" class="bg-green-500 text-white px-3 py-1 rounded text-sm">Segna Pagato e Chiudi Conto</button></div></div><div id="tableOrdersDetails" class="space-y-2 mb-4"></div><div class="border-t pt-4"><div class="flex justify-between items-center"><div><p class="text-sm text-gray-600">Totale ordini: <span id="totalOrders">0</span></p><p class="text-sm text-gray-600">In attesa: <span id="pendingOrders">0</span></p></div><div class="text-right"><p class="text-2xl font-bold text-sky-600" id="totalAmount">0 L</p><p class="text-sm text-gray-600">Totale conto</p></div></div></div><div id="paymentStatus" class="hidden mt-4 p-3 rounded text-center"></div></div><div class="bg-white rounded-lg p-4 shadow-sm"><h4 class="text-lg font-semibold mb-4">Panoramica Tutti i Tavoli</h4><div id="allTablesGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div><div id="categoriesTab" class="admin-tab-content hidden"><div class="flex justify-between items-center mb-4"><h4 class="font-medium text-xl">Gestione Categorie</h4><button id="addCategoryBtn" class="bg-sky-100 text-sky-700 px-3 py-1 rounded hover:bg-sky-200">➕ Aggiungi Categoria</button></div><div id="categoriesList" class="space-y-2 bg-white rounded-lg p-4 shadow-sm"></div></div><div id="historyTab" class="admin-tab-content hidden"><div class="flex justify-between items-center mb-4"><h4 class="font-medium text-xl">Storico Ordini</h4><div class="flex space-x-2"><button id="exportCsvBtn" class="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600">📊 Esporta CSV</button><button id="clearHistoryBtn" class="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">🗑️ Cancella Storico</button></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"><div class="bg-white rounded-lg p-4 shadow-sm"><div class="text-2xl font-bold text-sky-600" id="totalOrdersCount">0</div><div class="text-sm text-gray-600">Ordini Totali</div></div><div class="bg-white rounded-lg p-4 shadow-sm"><div class="text-2xl font-bold text-green-600" id="totalRevenue">0 L</div><div class="text-sm text-gray-600">Ricavi Totali</div></div><div class="bg-white rounded-lg p-4 shadow-sm"><div class="text-2xl font-bold text-purple-600" id="avgOrderValue">0 L</div><div class="text-sm text-gray-600">Valore Medio Ordine</div></div><div class="bg-white rounded-lg p-4 shadow-sm"><div class="text-lg font-bold text-orange-600" id="topProduct">-</div><div class="text-sm text-gray-600">Prodotto Top</div></div></div><div class="bg-white rounded-lg p-4 mb-4 shadow-sm"><h5 class="font-medium mb-3">Filtri</h5><div class="grid grid-cols-1 md:grid-cols-4 gap-4"><div><label class="block text-sm font-medium mb-1">Data Da</label><input type="date" id="dateFrom" class="w-full px-3 py-2 border rounded"></div><div><label class="block text-sm font-medium mb-1">Data A</label><input type="date" id="dateTo" class="w-full px-3 py-2 border rounded"></div><div><label class="block text-sm font-medium mb-1">Tipo Location</label><select id="locationTypeFilter" class="w-full px-3 py-2 border rounded"><option value="">Tutti</option><option value="table">Solo Tavoli</option><option value="umbrella">Solo Ombrelloni</option></select></div><div class="flex items-end"><button id="applyFiltersBtn" class="w-full bg-sky-500 text-white py-2 rounded hover:bg-sky-600">Applica Filtri</button></div></div></div><div class="bg-white rounded-lg overflow-hidden shadow-sm"><div class="overflow-x-auto"><table class="w-full"><thead class="bg-gray-100"><tr class="text-left text-sm font-medium text-gray-700"><th class="px-4 py-3">Data/Ora</th><th class="px-4 py-3">Location</th><th class="px-4 py-3">Prodotti</th><th class="px-4 py-3">Area</th><th class="px-4 py-3">Totale</th><th class="px-4 py-3">Stato</th><th class="px-4 py-3">Note</th></tr></thead><tbody id="historyTableBody" class="divide-y divide-gray-200"></tbody></table></div><div id="noHistoryMessage" class="hidden text-center py-8 text-gray-500">Nessun ordine nello storico</div></div></div><div id="qrCodeTab" class="admin-tab-content hidden"><div class="flex justify-between items-center mb-4"><h4 class="font-medium text-xl">Genera Codici QR</h4><button id="printQrBtn" class="bg-sky-500 text-white px-4 py-2 rounded">🖨️ Stampa Tutti</button></div><div id="qrCodePrintArea"><div class="mb-8 bg-white p-4 rounded-lg shadow-sm"><h5 class="font-semibold text-lg mb-4">Tavoli</h5><div id="qrCodesTables" class="qr-grid"></div></div><div class="bg-white p-4 rounded-lg shadow-sm"><h5 class="font-semibold text-lg mb-4">Ombrelloni</h5><div id="qrCodesUmbrellas" class="qr-grid"></div></div></div></div></div></div></div>
+        <div id="productModal" class="modal fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center"><div class="bg-white rounded-lg w-full max-w-md shadow-xl"><div class="flex justify-between items-center p-4 border-b"><h3 id="productModalTitle" class="text-xl font-semibold"></h3><button id="closeProductBtn" class="text-gray-400">❌</button></div><div class="p-4"><div class="space-y-4"><div><label class="block text-sm font-medium mb-1">Nome Prodotto</label><input id="productName" type="text" class="w-full px-3 py-2 border rounded"></div><div><label class="block text-sm font-medium mb-1">Descrizione</label><textarea id="productDescription" class="w-full px-3 py-2 border rounded" rows="2"></textarea></div><div><label class="block text-sm font-medium mb-1">Prezzo</label><div class="flex items-center"><input id="productPrice" type="number" step="1" min="0" class="w-full px-3 py-2 border rounded"><span id="productCurrency" class="ml-2"></span></div></div><div><label class="block text-sm font-medium mb-1">Categoria</label><select id="productCategory" class="w-full px-3 py-2 border rounded"></select></div><div><label class="block text-sm font-medium mb-1">Area</label><div class="flex space-x-4"><label class="flex items-center"><input type="radio" name="productArea" value="kitchen" class="mr-2" checked><span>Cucina</span></label><label class="flex items-center"><input type="radio" name="productArea" value="bar" class="mr-2"><span>Bar</span></label></div></div></div></div><div class="p-4 border-t bg-gray-50"><button id="saveProductBtn" class="w-full bg-sky-500 text-white py-2 rounded">Salva</button></div></div></div>
+        <div id="categoryModal" class="modal fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center"><div class="bg-white rounded-lg w-full max-w-md shadow-xl"><div class="flex justify-between items-center p-4 border-b"><h3 id="categoryModalTitle" class="text-xl font-semibold"></h3><button id="closeCategoryBtn" class="text-gray-400">❌</button></div><div class="p-4"><div class="space-y-4"><div><label class="block text-sm font-medium mb-1">Nome Categoria</label><input id="categoryName" type="text" class="w-full px-3 py-2 border rounded"></div><div><label class="block text-sm font-medium mb-1">Area</label><div class="flex space-x-4"><label class="flex items-center"><input type="radio" name="categoryArea" value="kitchen" class="mr-2" checked><span>🍳 Cucina</span></label><label class="flex items-center"><input type="radio" name="categoryArea" value="bar" class="mr-2"><span>🍹 Bar</span></label></div></div></div></div><div class="p-4 border-t bg-gray-50"><button id="saveCategoryBtn" class="w-full bg-sky-500 text-white py-2 rounded">Salva</button></div></div></div>
+        <div id="successModal" class="modal fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center"><div class="bg-white rounded-lg p-6 text-center shadow-xl"><div class="text-6xl mb-4">✅</div><h3 class="text-xl font-semibold mb-2">Ordine Inviato!</h3><p class="text-gray-600 mb-4">Il tuo ordine è stato inviato con successo</p><button id="closeSuccessBtn" class="bg-sky-500 text-white px-4 py-2 rounded">OK</button></div></div>
+        <div id="confirmationModal" class="modal fixed inset-0 bg-black bg-opacity-60 z-[100] hidden items-center justify-center p-4"><div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full"><h3 id="confirmationTitle" class="text-lg font-semibold mb-4">Sei sicuro?</h3><p id="confirmationMessage" class="text-gray-600 mb-6"></p><div class="flex justify-end gap-3"><button id="confirmCancelBtn" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Annulla</button><button id="confirmOkBtn" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">Conferma</button></div></div></div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const state = {
+            currentView: 'location',
+            selectedLocation: null,
+            cart: [],
+            orders: [],
+            orderHistory: [],
+            scanner: null,
+            settings: {
+                restaurantName: 'Beach Restaurant',
+                tableCount: 20,
+                umbrellaCount: 15,
+                currency: 'L',
+                whatsappNumber: ''
+            },
+            categories: [
+                {"id": "fast-food", "name": "Fast Food", "area": "kitchen"}, {"id": "breakfast", "name": "Breakfast", "area": "kitchen"},
+                {"id": "soup", "name": "Soup", "area": "kitchen"}, {"id": "salad", "name": "Salad", "area": "kitchen"},
+                {"id": "primi-piatti", "name": "Primi Piatti", "area": "kitchen"}, {"id": "carne", "name": "Carne", "area": "kitchen"},
+                {"id": "pesce", "name": "Pesce", "area": "kitchen"}, {"id": "pizza", "name": "Pizza", "area": "kitchen"}
+            ],
+            products: [
+                {"id": 1, "name": "Sanduig / Sandwich", "description": "", "price": 300, "categoryId": "fast-food", "area": "kitchen"},
+                {"id": 2, "name": "Sufllage / Gyros", "description": "", "price": 350, "categoryId": "fast-food", "area": "kitchen"},
+                {"id": 3, "name": "Qofte me salcë", "description": "", "price": 700, "categoryId": "fast-food", "area": "kitchen"},
+                {"id": 4, "name": "Qofte me salcë të bardhë", "description": "", "price": 700, "categoryId": "fast-food", "area": "kitchen"},
+                {"id": 5, "name": "Qofte me garniturë", "description": "", "price": 800, "categoryId": "fast-food", "area": "kitchen"},
+                {"id": 6, "name": "Cheese, butter, jam", "description": "", "price": 400, "categoryId": "breakfast", "area": "kitchen"},
+                {"id": 7, "name": "Eggs, ham, cheese", "description": "", "price": 400, "categoryId": "breakfast", "area": "kitchen"},
+                {"id": 8, "name": "Omelette with vegetables", "description": "", "price": 400, "categoryId": "breakfast", "area": "kitchen"},
+                {"id": 9, "name": "Milk, croissant", "description": "", "price": 400, "categoryId": "breakfast", "area": "kitchen"},
+                {"id": 10, "name": "Fish soup", "description": "", "price": 500, "categoryId": "soup", "area": "kitchen"},
+                {"id": 11, "name": "Children soup", "description": "", "price": 400, "categoryId": "soup", "area": "kitchen"},
+                {"id": 12, "name": "Vegetables soup", "description": "", "price": 400, "categoryId": "soup", "area": "kitchen"},
+                {"id": 13, "name": "Soup with chicken cream", "description": "", "price": 500, "categoryId": "soup", "area": "kitchen"},
+                {"id": 14, "name": "Fish soup with sea fruits", "description": "", "price": 900, "categoryId": "soup", "area": "kitchen"},
+                {"id": 15, "name": "Rukola, octopus, tomatoes, lemon", "description": "", "price": 1000, "categoryId": "salad", "area": "kitchen"},
+                {"id": 16, "name": "Village salad", "description": "", "price": 400, "categoryId": "salad", "area": "kitchen"},
+                {"id": 17, "name": "Arugula salad, pomodorini", "description": "", "price": 400, "categoryId": "salad", "area": "kitchen"},
+                {"id": 18, "name": "Tuna salad", "description": "", "price": 800, "categoryId": "salad", "area": "kitchen"},
+                {"id": 19, "name": "Green salad with ham, cheese, xaxiqi", "description": "", "price": 600, "categoryId": "salad", "area": "kitchen"},
+                {"id": 20, "name": "Grill vegetables", "description": "", "price": 400, "categoryId": "salad", "area": "kitchen"},
+                {"id": 21, "name": "Mix sea grill", "description": "", "price": 2200, "categoryId": "salad", "area": "kitchen"},
+                {"id": 22, "name": "Pasta with sea fruits", "description": "", "price": 900, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 23, "name": "Pasta with shrimp", "description": "", "price": 900, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 24, "name": "Pasta with mussel", "description": "", "price": 700, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 25, "name": "Carbonara", "description": "", "price": 700, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 26, "name": "Penne with tuna, cheese", "description": "", "price": 700, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 27, "name": "Penne with tomatoes, olives", "description": "", "price": 600, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 28, "name": "Pasta with tomatoes", "description": "", "price": 400, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 29, "name": "Risotto with shrimp", "description": "", "price": 900, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 30, "name": "Risotto with sea fruits", "description": "", "price": 900, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 31, "name": "Risotto with vegetables", "description": "", "price": 600, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 32, "name": "Meatballs with sauce", "description": "", "price": 700, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 33, "name": "Sea salad", "description": "", "price": 1800, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 34, "name": "Saganaki", "description": "", "price": 900, "categoryId": "primi-piatti", "area": "kitchen"},
+                {"id": 35, "name": "Pig cutlet (kg)", "description": "", "price": 1700, "categoryId": "carne", "area": "kitchen"},
+                {"id": 36, "name": "Lamb cutlet (kg)", "description": "", "price": 2500, "categoryId": "carne", "area": "kitchen"},
+                {"id": 37, "name": "Pig meat with wine, cream, mushrooms", "description": "", "price": 900, "categoryId": "carne", "area": "kitchen"},
+                {"id": 38, "name": "Pig meat with mushrooms, zafferano", "description": "", "price": 900, "categoryId": "carne", "area": "kitchen"},
+                {"id": 39, "name": "Roast beef garniture", "description": "", "price": 1000, "categoryId": "carne", "area": "kitchen"},
+                {"id": 40, "name": "Chicken cutlets with garniture", "description": "", "price": 1000, "categoryId": "carne", "area": "kitchen"},
+                {"id": 41, "name": "Marine mussels", "description": "", "price": 650, "categoryId": "pesce", "area": "kitchen"},
+                {"id": 42, "name": "Casserole with sea fruits", "description": "", "price": 1800, "categoryId": "pesce", "area": "kitchen"},
+                {"id": 43, "name": "Captain casserole", "description": "", "price": 1800, "categoryId": "pesce", "area": "kitchen"},
+                {"id": 44, "name": "Casserole with eel", "description": "", "price": 1800, "categoryId": "pesce", "area": "kitchen"},
+                {"id": 45, "name": "Sea fry", "description": "", "price": 1800, "categoryId": "pesce", "area": "kitchen"},
+                {"id": 46, "name": "Salad with sea fruits", "description": "", "price": 1800, "categoryId": "pesce", "area": "kitchen"},
+                {"id": 47, "name": "Margherita", "description": "", "price": 500, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 48, "name": "Ham and Mushrooms", "description": "", "price": 600, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 49, "name": "Spicy Salami", "description": "", "price": 800, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 50, "name": "Smoked Ham", "description": "", "price": 800, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 51, "name": "Vegetarian", "description": "", "price": 800, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 52, "name": "Napoli", "description": "", "price": 800, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 53, "name": "Diavola", "description": "", "price": 800, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 54, "name": "Capricciosa", "description": "", "price": 900, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 55, "name": "4 Cheeses", "description": "", "price": 900, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 56, "name": "Speciale", "description": "", "price": 1000, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 57, "name": "Raw Pizza", "description": "", "price": 1000, "categoryId": "pizza", "area": "kitchen"},
+                {"id": 58, "name": "Sea Fruits", "description": "", "price": 1100, "categoryId": "pizza", "area": "kitchen"}
+            ],
+            editingProductId: null,
+            editingCategoryId: null,
+            confirmationCallback: null,
+        };
+
+        const dom = {
+            app: document.getElementById('app'),
+            locationSection: document.getElementById('locationSection'), menuSection: document.getElementById('menuSection'), scannerSection: document.getElementById('scannerSection'),
+            adminBtn: document.getElementById('adminBtn'), scanBtn: document.getElementById('scanBtn'), cartBtn: document.getElementById('cartBtn'), adminBadge: document.getElementById('adminBadge'), cartBadge: document.getElementById('cartBadge'),
+            tableTab: document.getElementById('tableTab'), umbrellaTab: document.getElementById('umbrellaTab'), locationsGrid: document.getElementById('locationsGrid'), scanLocationBtn: document.getElementById('scanLocationBtn'),
+            locationInfo: document.getElementById('locationInfo'), changeLocationBtn: document.getElementById('changeLocationBtn'), categoriesContainer: document.getElementById('categoriesContainer'), menuItemsContainer: document.getElementById('menuItemsContainer'),
+            closeScannerBtn: document.getElementById('closeScannerBtn'), qrReader: document.getElementById('qrReader'), scanMessage: document.getElementById('scanMessage'), startScanBtn: document.getElementById('startScanBtn'), uploadBtn: document.getElementById('uploadBtn'), fileInput: document.getElementById('fileInput'),
+            manualType: document.getElementById('manualType'), manualNumber: document.getElementById('manualNumber'), manualSubmitBtn: document.getElementById('manualSubmitBtn'), testQrCode: document.getElementById('testQrCode'),
+            cartModal: document.getElementById('cartModal'), closeCartBtn: document.getElementById('closeCartBtn'), cartItems: document.getElementById('cartItems'), orderNotes: document.getElementById('orderNotes'), cartTotal: document.getElementById('cartTotal'), sendOrderBtn: document.getElementById('sendOrderBtn'), whatsappBtn: document.getElementById('whatsappBtn'),
+            adminModal: document.getElementById('adminModal'), closeAdminBtn: document.getElementById('closeAdminBtn'), adminTabs: document.querySelectorAll('.admin-tab'), adminTabContents: document.querySelectorAll('.admin-tab-content'),
+            restaurantName: document.getElementById('restaurantName'), currency: document.getElementById('currency'), tableCount: document.getElementById('tableCount'), umbrellaCount: document.getElementById('umbrellaCount'), whatsappNumber: document.getElementById('whatsappNumber'), saveSettingsBtn: document.getElementById('saveSettingsBtn'),
+            productsTab: document.getElementById('productsTab'), addProductBtn: document.getElementById('addProductBtn'), categoryFilter: document.getElementById('categoryFilter'), productsList: document.getElementById('productsList'),
+            ordersTab: document.getElementById('ordersTab'), orderTypeTabs: document.querySelectorAll('.order-type-tab'), orderTypeContents: document.querySelectorAll('.order-type-content'), ordersListKitchen: document.getElementById('ordersListKitchen'), ordersListBar: document.getElementById('ordersListBar'), ordersTabBadge: document.getElementById('ordersTabBadge'), kitchenBadge: document.getElementById('kitchenBadge'), barBadge: document.getElementById('barBadge'),
+            tableOrdersTab: document.getElementById('tableOrdersTab'), searchType: document.getElementById('searchType'), searchNumber: document.getElementById('searchNumber'), searchBtn: document.getElementById('searchBtn'), searchResults: document.getElementById('searchResults'), searchResultTitle: document.getElementById('searchResultTitle'), markPaidBtn: document.getElementById('markPaidBtn'), tableOrdersDetails: document.getElementById('tableOrdersDetails'), totalOrders: document.getElementById('totalOrders'), pendingOrders: document.getElementById('pendingOrders'), totalAmount: document.getElementById('totalAmount'), paymentStatus: document.getElementById('paymentStatus'), allTablesGrid: document.getElementById('allTablesGrid'),
+            categoriesTab: document.getElementById('categoriesTab'), addCategoryBtn: document.getElementById('addCategoryBtn'), categoriesList: document.getElementById('categoriesList'),
+            historyTab: document.getElementById('historyTab'), exportCsvBtn: document.getElementById('exportCsvBtn'), clearHistoryBtn: document.getElementById('clearHistoryBtn'), totalOrdersCount: document.getElementById('totalOrdersCount'), totalRevenue: document.getElementById('totalRevenue'), avgOrderValue: document.getElementById('avgOrderValue'), topProduct: document.getElementById('topProduct'), dateFrom: document.getElementById('dateFrom'), dateTo: document.getElementById('dateTo'), locationTypeFilter: document.getElementById('locationTypeFilter'), applyFiltersBtn: document.getElementById('applyFiltersBtn'), historyTableBody: document.getElementById('historyTableBody'), noHistoryMessage: document.getElementById('noHistoryMessage'),
+            qrCodeTab: document.getElementById('qrCodeTab'), printQrBtn: document.getElementById('printQrBtn'), qrCodesTables: document.getElementById('qrCodesTables'), qrCodesUmbrellas: document.getElementById('qrCodesUmbrellas'), qrCodePrintArea: document.getElementById('qrCodePrintArea'),
+            productModal: document.getElementById('productModal'), productModalTitle: document.getElementById('productModalTitle'), closeProductBtn: document.getElementById('closeProductBtn'), productName: document.getElementById('productName'), productDescription: document.getElementById('productDescription'), productPrice: document.getElementById('productPrice'), productCurrency: document.getElementById('productCurrency'), productCategory: document.getElementById('productCategory'), saveProductBtn: document.getElementById('saveProductBtn'),
+            categoryModal: document.getElementById('categoryModal'), categoryModalTitle: document.getElementById('categoryModalTitle'), closeCategoryBtn: document.getElementById('closeCategoryBtn'), categoryName: document.getElementById('categoryName'), saveCategoryBtn: document.getElementById('saveCategoryBtn'),
+            successModal: document.getElementById('successModal'), closeSuccessBtn: document.getElementById('closeSuccessBtn'),
+            confirmationModal: document.getElementById('confirmationModal'), confirmationTitle: document.getElementById('confirmationTitle'), confirmationMessage: document.getElementById('confirmationMessage'), confirmCancelBtn: document.getElementById('confirmCancelBtn'), confirmOkBtn: document.getElementById('confirmOkBtn'),
+            toastContainer: document.getElementById('toast-container'),
+        };
+
+        const saveData = () => { try { const stateToSave = { ...state, categories: undefined, products: undefined }; localStorage.setItem('beachRestaurantState', JSON.stringify(stateToSave)); } catch (e) { console.error("Failed to save state", e); showToast("Impossibile salvare i dati", "error"); } };
+        const loadData = () => { try { const savedState = localStorage.getItem('beachRestaurantState'); if (savedState) { const loaded = JSON.parse(savedState); Object.assign(state, { ...loaded, categories: state.categories, products: state.products }); } } catch (e) { console.error("Failed to load state", e); showToast("Impossibile caricare i dati", "error"); } };
+        const formatCurrency = (amount) => `${amount} ${state.settings.currency}`;
+        const showToast = (message, type = 'success') => { const t = document.createElement('div'); t.className = `toast ${type}`; t.textContent = message; dom.toastContainer.appendChild(t); setTimeout(() => t.remove(), 4500); };
+        const showConfirmation = (title, message, onConfirm) => { dom.confirmationTitle.textContent = title; dom.confirmationMessage.textContent = message; state.confirmationCallback = onConfirm; toggleModal('confirmationModal', true); };
+        const toggleModal = (modalId, show) => { const modal = document.getElementById(modalId); modal.classList.toggle('hidden', !show); modal.classList.toggle('flex', show); };
+
+        const render = () => {
+            dom.locationSection.classList.toggle('hidden', state.currentView !== 'location');
+            dom.menuSection.classList.toggle('hidden', state.currentView !== 'menu');
+            dom.scannerSection.classList.toggle('hidden', state.currentView !== 'scanner');
+            updateCartBadge(); updateAdminBadge();
+            if (state.currentView === 'location') { renderLocations('table'); }
+            if (state.currentView === 'menu') { renderMenu(); }
+        };
+
+        const renderLocations = (type) => {
+            dom.locationsGrid.innerHTML = '';
+            const count = type === 'table' ? state.settings.tableCount : state.settings.umbrellaCount;
+            const icon = type === 'table' ? 'T' : '☂️';
+            for (let i = 1; i <= count; i++) {
+                const btn = document.createElement('button');
+                btn.className = 'p-4 border rounded-lg text-center hover:bg-sky-200';
+                btn.innerHTML = `<div class="text-2xl">${icon}</div><div class="font-semibold">${i}</div>`;
+                btn.onclick = () => selectLocation(type, i);
+                dom.locationsGrid.appendChild(btn);
+            }
+        };
+        
+        const renderMenu = () => {
+            if (!state.selectedLocation) return;
+            dom.locationInfo.textContent = `${state.selectedLocation.type === 'table' ? 'Tavolo' : 'Ombrellone'} ${state.selectedLocation.number}`;
+            renderCategories(); renderMenuItems();
+        };
+
+        const renderCategories = () => {
+            dom.categoriesContainer.innerHTML = '';
+            const allBtn = document.createElement('button');
+            allBtn.className = 'category-btn px-4 py-2 rounded-full bg-sky-500 text-white font-semibold flex-shrink-0';
+            allBtn.textContent = 'Tutti';
+            allBtn.onclick = (e) => { document.querySelectorAll('.category-btn').forEach(b => b.classList.replace('bg-sky-500','bg-white')); renderMenuItems(null); e.target.classList.replace('bg-white', 'bg-sky-500'); };
+            dom.categoriesContainer.appendChild(allBtn);
+            state.categories.forEach(cat => {
+                const btn = document.createElement('button');
+                btn.className = 'category-btn px-4 py-2 rounded-full bg-white text-gray-700 font-semibold flex-shrink-0';
+                btn.textContent = cat.name;
+                btn.onclick = (e) => { document.querySelectorAll('.category-btn').forEach(b => b.classList.replace('bg-sky-500','bg-white')); renderMenuItems(cat.id); e.target.classList.replace('bg-white', 'bg-sky-500');};
+                dom.categoriesContainer.appendChild(btn);
+            });
+        };
+
+        const renderMenuItems = (categoryId = null) => {
+            dom.menuItemsContainer.innerHTML = '';
+            const items = categoryId ? state.products.filter(p => p.categoryId === categoryId) : state.products;
+            if (items.length === 0) { dom.menuItemsContainer.innerHTML = `<p class="text-gray-500 col-span-full">Nessun prodotto.</p>`; return; }
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'card bg-white rounded-lg p-4 shadow flex flex-col';
+                card.innerHTML = `<div class="flex-grow"><h3 class="font-bold text-lg">${item.name}</h3><p class="text-gray-600 text-sm mb-2">${item.description}</p></div><div class="flex justify-between items-center mt-4"><span class="font-semibold text-sky-600">${formatCurrency(item.price)}</span><button class="add-to-cart-btn bg-sky-100 text-sky-700 px-3 py-1 rounded-full text-sm font-bold hover:bg-sky-200">Aggiungi</button></div>`;
+                card.querySelector('.add-to-cart-btn').onclick = () => addToCart(item.id);
+                dom.menuItemsContainer.appendChild(card);
+            });
+        };
+
+        const renderCart = () => {
+            dom.cartItems.innerHTML = '';
+            if (state.cart.length === 0) { dom.cartItems.innerHTML = '<p class="text-gray-500 text-center">Il carrello è vuoto.</p>'; dom.cartTotal.textContent = formatCurrency(0); return; }
+            let total = 0;
+            state.cart.forEach(cartItem => {
+                const product = state.products.find(p => p.id === cartItem.id);
+                if (!product) return;
+                total += product.price * cartItem.quantity;
+                const itemEl = document.createElement('div');
+                itemEl.className = 'flex items-center';
+                itemEl.innerHTML = `<div class="flex-grow"><p class="font-semibold">${product.name}</p><p class="text-sm text-gray-500">${formatCurrency(product.price)}</p></div><div class="flex items-center space-x-3"><button class="quantity-change-btn text-lg font-bold text-sky-500" data-id="${product.id}" data-change="-1">-</button><span>${cartItem.quantity}</span><button class="quantity-change-btn text-lg font-bold text-sky-500" data-id="${product.id}" data-change="1">+</button></div><button class="remove-from-cart-btn ml-4 text-red-500" data-id="${product.id}">🗑️</button>`;
+                dom.cartItems.appendChild(itemEl);
+            });
+            dom.cartTotal.textContent = formatCurrency(total);
+            document.querySelectorAll('.quantity-change-btn').forEach(b => b.onclick = (e) => updateQuantity(parseInt(e.currentTarget.dataset.id), parseInt(e.currentTarget.dataset.change)));
+            document.querySelectorAll('.remove-from-cart-btn').forEach(b => b.onclick = (e) => updateQuantity(parseInt(e.currentTarget.dataset.id), 0));
+        };
+
+        const updateCartBadge = () => {
+            const count = state.cart.reduce((s, i) => s + i.quantity, 0);
+            dom.cartBadge.textContent = count; dom.cartBadge.classList.toggle('hidden', count === 0);
+        };
+        const updateAdminBadge = () => {
+            const pending = state.orders.filter(o => o.status === 'pending');
+            dom.adminBadge.textContent = pending.length; dom.adminBadge.classList.toggle('hidden', pending.length === 0);
+            dom.ordersTabBadge.textContent = pending.length; dom.ordersTabBadge.classList.toggle('hidden', pending.length === 0);
+            const kCount = pending.filter(o=>o.area==='kitchen').length; const bCount = pending.filter(o=>o.area==='bar').length;
+            dom.kitchenBadge.textContent = kCount; dom.kitchenBadge.classList.toggle('hidden', kCount === 0);
+            dom.barBadge.textContent = bCount; dom.barBadge.classList.toggle('hidden', bCount === 0);
+        };
+
+        const switchView = (view) => {
+            state.currentView = view;
+            if (view !== 'scanner' && state.scanner) { stopScanner(); }
+            if (view === 'scanner') { 
+                // Delay QR code generation slightly to ensure the element is visible
+                setTimeout(() => generateTestQrCode(), 50); 
+            }
+            render();
+        };
+
+        const selectLocation = (type, number) => { state.selectedLocation = { type, number }; switchView('menu'); saveData(); };
+        const addToCart = (productId) => {
+            const item = state.cart.find(i => i.id === productId);
+            if (item) { item.quantity++; } else { state.cart.push({ id: productId, quantity: 1 }); }
+            showToast(`${state.products.find(p=>p.id === productId).name} aggiunto al carrello`); updateCartBadge(); saveData();
+        };
+        const updateQuantity = (id, change) => {
+            const item = state.cart.find(i => i.id === id); if (!item) return;
+            item.quantity += change;
+            if (item.quantity <= 0 || change === 0) { state.cart = state.cart.filter(i => i.id !== id); }
+            saveData(); renderCart(); updateCartBadge();
+        }
+
+        const sendOrder = () => {
+            if (state.cart.length === 0) return;
+            const itemsByArea = { kitchen: [], bar: [] };
+            state.cart.forEach(ci => { const p = state.products.find(p => p.id === ci.id); if(p) itemsByArea[p.area].push({ ...ci, price: p.price, name: p.name }); });
+            const timestamp = new Date().toISOString();
+            Object.keys(itemsByArea).forEach(area => { if (itemsByArea[area].length > 0) { state.orders.push({ id: Date.now() + Math.random(), location: state.selectedLocation, items: itemsByArea[area], notes: dom.orderNotes.value, status: 'pending', area: area, timestamp }); } });
+            state.cart = []; dom.orderNotes.value = ''; saveData(); renderCart(); updateCartBadge(); updateAdminBadge(); toggleModal('cartModal', false); toggleModal('successModal', true);
+        };
+        
+        const sendWhatsAppOrder = () => {
+            if (state.cart.length === 0) return;
+            if (!state.settings.whatsappNumber) { showToast("Numero WhatsApp non configurato.", "error"); return; }
+            let total = 0;
+            let message = `*Nuovo Ordine* dal ${state.selectedLocation.type === 'table' ? 'Tavolo' : 'Ombrellone'} *${state.selectedLocation.number}*\n\n`;
+            state.cart.forEach(ci => { const p = state.products.find(p => p.id === ci.id); message += `${ci.quantity}x ${p.name} - ${formatCurrency(p.price * ci.quantity)}\n`; total += p.price * ci.quantity; });
+            message += `\n*Totale: ${formatCurrency(total)}*`;
+            if (dom.orderNotes.value.trim()) { message += `\n\n*Note:* ${dom.orderNotes.value.trim()}`; }
+            window.open(`https://wa.me/${state.settings.whatsappNumber}?text=${encodeURIComponent(message)}`, '_blank');
+        };
+
+        const startScanner = () => {
+            if (state.scanner) { stopScanner(); }
+            state.scanner = new Html5Qrcode("qrReader");
+            dom.scanMessage.textContent = "Avvio fotocamera...";
+            state.scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } },
+                (text) => { showToast(`QR Rilevato: ${text}`); handleScannedData(text); stopScanner(); },
+                (err) => {}
+            ).catch(() => { dom.scanMessage.textContent = `Errore fotocamera.`; showToast(`Errore: Assicurati di aver dato i permessi per la fotocamera.`, "error"); });
+        };
+        const stopScanner = () => { if (state.scanner?.isScanning) { state.scanner.stop().then(() => { dom.scanMessage.textContent = "Clicca 'Avvia Scanner' per iniziare"; state.scanner = null; }).catch(() => state.scanner = null); }};
+        const handleScannedData = (data) => {
+            try { const [type, num] = data.split(':'); if ((type==='table'||type==='umbrella') && !isNaN(parseInt(num))) selectLocation(type, parseInt(num)); else showToast("QR non valido.", "error"); }
+            catch (e) { showToast("Formato QR non valido.", "error"); }
+        };
+        const generateTestQrCode = () => { if (typeof QRCode !== 'undefined') { dom.testQrCode.innerHTML = ''; new QRCode(dom.testQrCode, { text: "table:5", width: 128, height: 128 }); } };
+
+        const renderAdmin = () => {
+            renderAdminSettings(); renderAdminProducts(); renderAdminCategoryFilters(); renderAdminCategories(); renderAdminOrders(); renderAdminTableOrdersOverview(); renderAdminHistory(); updateAdminBadge();
+        };
+        const renderAdminSettings = () => { dom.restaurantName.value = state.settings.restaurantName; dom.currency.value = state.settings.currency; dom.tableCount.value = state.settings.tableCount; dom.umbrellaCount.value = state.settings.umbrellaCount; dom.whatsappNumber.value = state.settings.whatsappNumber; };
+        const saveAdminSettings = () => { state.settings.restaurantName = dom.restaurantName.value; state.settings.currency = dom.currency.value; state.settings.tableCount = parseInt(dom.tableCount.value); state.settings.umbrellaCount = parseInt(dom.umbrellaCount.value); state.settings.whatsappNumber = dom.whatsappNumber.value.replace(/\s+/g, ''); saveData(); showToast('Impostazioni salvate!'); document.querySelector('h1').textContent = `🏖️ ${state.settings.restaurantName}`; render(); };
+        const renderAdminProducts = (filterId = null) => {
+            dom.productsList.innerHTML = '';
+            const items = filterId ? state.products.filter(p => p.categoryId === filterId) : state.products;
+            items.forEach(p => {
+                const c = state.categories.find(c => c.id === p.categoryId);
+                const el = document.createElement('div'); el.className = 'bg-white p-3 rounded shadow-sm flex justify-between items-center';
+                el.innerHTML = `<div><p class="font-semibold">${p.name} <span class="text-xs font-normal text-gray-500">(${(c ? c.name : 'N/A')})</span></p><p class="text-sm text-sky-600">${formatCurrency(p.price)}</p></div><div class="space-x-2"><button class="edit-product-btn text-blue-500" data-id="${p.id}">Modifica</button><button class="delete-product-btn text-red-500" data-id="${p.id}">Elimina</button></div>`;
+                dom.productsList.appendChild(el);
+            });
+            document.querySelectorAll('.edit-product-btn').forEach(b => b.onclick = (e) => openProductModal(parseInt(e.target.dataset.id)));
+            document.querySelectorAll('.delete-product-btn').forEach(b => b.onclick = (e) => deleteProduct(parseInt(e.target.dataset.id)));
+        };
+        const renderAdminCategoryFilters = () => {
+            dom.categoryFilter.innerHTML = ''; const allBtn = document.createElement('button'); allBtn.className = 'px-3 py-1 rounded-full text-sm bg-sky-500 text-white'; allBtn.textContent = 'Tutte';
+            allBtn.onclick = () => { document.querySelectorAll('#categoryFilter button').forEach(b => {b.classList.remove('bg-sky-500', 'text-white'); b.classList.add('bg-gray-200', 'text-gray-800')}); allBtn.classList.add('bg-sky-500', 'text-white'); renderAdminProducts(); };
+            dom.categoryFilter.appendChild(allBtn);
+            state.categories.forEach(cat => { const btn = document.createElement('button'); btn.className = 'px-3 py-1 rounded-full text-sm bg-gray-200 text-gray-800'; btn.textContent = cat.name; btn.onclick = () => { document.querySelectorAll('#categoryFilter button').forEach(b => {b.classList.remove('bg-sky-500', 'text-white'); b.classList.add('bg-gray-200', 'text-gray-800')}); btn.classList.add('bg-sky-500', 'text-white'); renderAdminProducts(cat.id); }; dom.categoryFilter.appendChild(btn); });
+        };
+        const openProductModal = (id = null) => {
+            state.editingProductId = id; dom.productCategory.innerHTML = state.categories.map(c => `<option value="${c.id}">${c.name}</option>`).join(''); dom.productCurrency.textContent = state.settings.currency;
+            if (id) { const p = state.products.find(p => p.id === id); dom.productModalTitle.textContent = 'Modifica Prodotto'; dom.productName.value = p.name; dom.productDescription.value = p.description; dom.productPrice.value = p.price; dom.productCategory.value = p.categoryId; document.querySelector(`input[name="productArea"][value="${p.area}"]`).checked = true; } 
+            else { dom.productModalTitle.textContent = 'Aggiungi Prodotto'; dom.productName.value = ''; dom.productDescription.value = ''; dom.productPrice.value = ''; dom.productCategory.value = state.categories[0]?.id || ''; document.querySelector(`input[name="productArea"][value="kitchen"]`).checked = true; }
+            toggleModal('productModal', true);
+        };
+        const saveProduct = () => {
+            const name = dom.productName.value.trim(), price = parseFloat(dom.productPrice.value); if (!name || isNaN(price)) { showToast('Nome e prezzo sono obbligatori.', 'error'); return; }
+            const data = { name, description: dom.productDescription.value.trim(), price, categoryId: dom.productCategory.value, area: document.querySelector('input[name="productArea"]:checked').value };
+            if (state.editingProductId) { const i = state.products.findIndex(p => p.id === state.editingProductId); state.products[i] = { ...state.products[i], ...data }; } else { state.products.push({ id: Date.now(), ...data }); }
+            saveData(); renderAdminProducts(); toggleModal('productModal', false); showToast('Prodotto salvato!');
+        };
+        const deleteProduct = (id) => showConfirmation('Elimina Prodotto', 'Sei sicuro di voler eliminare questo prodotto?', () => { state.products = state.products.filter(p => p.id !== id); saveData(); renderAdminProducts(); showToast('Prodotto eliminato.'); });
+        const renderAdminCategories = () => {
+            dom.categoriesList.innerHTML = '';
+            state.categories.forEach(c => { const el = document.createElement('div'); el.className = 'bg-white p-3 rounded flex justify-between items-center'; el.innerHTML = `<div><p class="font-semibold">${c.name} <span class="text-sm font-normal text-gray-500">${c.area === 'kitchen' ? '🍳 Cucina' : '🍹 Bar'}</span></p></div><div class="space-x-2"><button class="edit-category-btn text-blue-500" data-id="${c.id}">Modifica</button><button class="delete-category-btn text-red-500" data-id="${c.id}">Elimina</button></div>`; dom.categoriesList.appendChild(el); });
+            document.querySelectorAll('.edit-category-btn').forEach(b => b.onclick = (e) => openCategoryModal(e.target.dataset.id));
+            document.querySelectorAll('.delete-category-btn').forEach(b => b.onclick = (e) => deleteCategory(e.target.dataset.id));
+        };
+        const openCategoryModal = (id = null) => {
+            state.editingCategoryId = id;
+            if (id) { const c = state.categories.find(c => c.id === id); dom.categoryModalTitle.textContent = 'Modifica Categoria'; dom.categoryName.value = c.name; document.querySelector(`input[name="categoryArea"][value="${c.area}"]`).checked = true; }
+            else { dom.categoryModalTitle.textContent = 'Aggiungi Categoria'; dom.categoryName.value = ''; document.querySelector(`input[name="categoryArea"][value="kitchen"]`).checked = true; }
+            toggleModal('categoryModal', true);
+        };
+        const saveCategory = () => {
+            const name = dom.categoryName.value.trim(); if (!name) { showToast('Il nome è obbligatorio.', 'error'); return; }
+            const data = { name, area: document.querySelector('input[name="categoryArea"]:checked').value };
+            if (state.editingCategoryId) { const i = state.categories.findIndex(c => c.id === state.editingCategoryId); state.categories[i] = { ...state.categories[i], ...data }; } 
+            else { state.categories.push({ id: name.toLowerCase().replace(/\s+/g, '-'), ...data }); }
+            saveData(); renderAdminCategories(); renderAdminCategoryFilters(); toggleModal('categoryModal', false); showToast('Categoria salvata!');
+        };
+        const deleteCategory = (id) => { if (state.products.some(p => p.categoryId === id)) { showToast('Ci sono prodotti in questa categoria.', 'error'); return; } showConfirmation('Elimina Categoria', 'Sei sicuro di volerla eliminare?', () => { state.categories = state.categories.filter(c => c.id !== id); saveData(); renderAdminCategories(); renderAdminCategoryFilters(); showToast('Categoria eliminata.'); }); };
+        const renderAdminOrders = () => {
+            const pending = state.orders.filter(o => o.status === 'pending');
+            const renderArea = (area, container) => { container.innerHTML = ''; const orders = pending.filter(o => o.area === area).sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)); if (orders.length===0){container.innerHTML=`<p class="text-gray-500 p-4">Nessun ordine in attesa.</p>`; return;} orders.forEach(o => { const el = document.createElement('div'); el.className = 'bg-white p-4 rounded-lg shadow-sm'; el.innerHTML = `<div class="flex justify-between items-start"><div><h4 class="font-bold text-lg">${o.location.type==='table'?'Tavolo':'Ombrellone'} ${o.location.number}</h4><p class="text-xs text-gray-500">Ricevuto: ${new Date(o.timestamp).toLocaleTimeString()}</p></div><button class="complete-order-btn bg-green-500 text-white px-3 py-1 rounded text-sm" data-id="${o.id}">Completato</button></div><ul class="list-disc list-inside mt-2 text-gray-800">${o.items.map(i=>`<li><span class="font-semibold">${i.quantity}x</span> ${i.name}</li>`).join('')}</ul>${o.notes?`<p class="mt-2 text-sm bg-yellow-100 p-2 rounded"><strong>Note:</strong> ${o.notes}</p>`:''}`; container.appendChild(el); }); };
+            renderArea('kitchen', dom.ordersListKitchen); renderArea('bar', dom.ordersListBar);
+            document.querySelectorAll('.complete-order-btn').forEach(b => b.onclick = (e) => { const order = state.orders.find(o => o.id === parseFloat(e.target.dataset.id)); if(order) { order.status = 'completed'; saveData(); renderAdminOrders(); updateAdminBadge(); }});
+        };
+        const renderAdminTableOrdersOverview = () => {
+            dom.allTablesGrid.innerHTML = ''; const locs = [];
+            for(let i=1;i<=state.settings.tableCount;i++)locs.push({type:'table',number:i}); for(let i=1;i<=state.settings.umbrellaCount;i++)locs.push({type:'umbrella',number:i});
+            const activeLocs = new Set(state.orders.map(o => `${o.location.type}-${o.location.number}`));
+            locs.forEach(loc => { const locId = `${loc.type}-${loc.number}`; if(activeLocs.has(locId)) { const os=state.orders.filter(o=>o.location.type===loc.type && o.location.number===loc.number); const tot = os.flatMap(o=>o.items).reduce((s,i)=>s+(i.price*i.quantity),0); const isP=os.every(o=>o.status==='paid'); const hasP=os.some(o=>o.status==='pending'); let bg=isP?'bg-green-100':hasP?'bg-red-100':'bg-yellow-100'; const el=document.createElement('div'); el.className=`p-3 rounded-lg ${bg} cursor-pointer hover:ring-2 ring-sky-500`; el.innerHTML=`<p class="font-bold">${loc.type==='table'?'Tavolo':'Ombrellone'} ${loc.number}</p><p class="text-sm">${os.length} ordini</p><p class="text-sm font-semibold">${formatCurrency(tot)}</p>`; el.onclick=()=>searchTable(loc.type,loc.number); dom.allTablesGrid.appendChild(el); }});
+        };
+        const searchTable = (type, number) => {
+            if (!type || !number) return;
+            const locOrders = state.orders.filter(o => o.location.type === type && o.location.number === number);
+            dom.searchResults.classList.remove('hidden'); dom.searchResultTitle.textContent = `Conto ${type==='table'?'Tavolo':'Ombrellone'} ${number}`;
+            dom.tableOrdersDetails.innerHTML = ''; let total=0, pendingCount=0;
+            if (locOrders.length === 0) { dom.tableOrdersDetails.innerHTML = `<p>Nessun ordine.</p>`; dom.totalAmount.textContent = formatCurrency(0); dom.totalOrders.textContent = 0; dom.pendingOrders.textContent = 0; dom.paymentStatus.classList.add('hidden'); return; }
+            locOrders.forEach(o=>{ const orderTotal=o.items.reduce((s,i)=>s+(i.price*i.quantity),0); total+=orderTotal; if(o.status==='pending')pendingCount++; const el=document.createElement('div'); el.className='p-2 border-b'; el.innerHTML=`<p class="text-sm text-gray-500">Ordine ${new Date(o.timestamp).toLocaleTimeString()} - Stato: ${o.status}</p><ul class="text-sm list-disc list-inside">${o.items.map(i=>`<li>${i.quantity}x ${i.name}</li>`).join('')}</ul>`; dom.tableOrdersDetails.appendChild(el); });
+            dom.totalAmount.textContent=formatCurrency(total); dom.totalOrders.textContent=locOrders.length; dom.pendingOrders.textContent=pendingCount;
+            const isPaid=locOrders.every(o=>o.status==='paid'); dom.paymentStatus.classList.toggle('hidden',!isPaid); if(isPaid){dom.paymentStatus.textContent='Conto Pagato';dom.paymentStatus.className='mt-4 p-3 rounded text-center bg-green-100 text-green-800';}
+            dom.markPaidBtn.onclick = () => showConfirmation('Chiudi Conto', `Segnare come pagato e spostare nello storico il conto per ${type} ${number}?`, () => { const toMove=[], remaining=[]; state.orders.forEach(o=>{if(o.location.type===type && o.location.number===number){o.status='paid';toMove.push(o);}else{remaining.push(o);}}); state.orderHistory.push(...toMove); state.orders=remaining; saveData(); renderAdmin(); dom.searchResults.classList.add('hidden'); showToast(`Conto per ${type} ${number} chiuso.`); });
+        };
+        const renderAdminHistory = (filters = {}) => {
+            let hist = [...state.orderHistory];
+            if (filters.dateFrom) hist = hist.filter(o => new Date(o.timestamp) >= new Date(filters.dateFrom)); if (filters.dateTo) hist = hist.filter(o => new Date(o.timestamp) <= new Date(new Date(filters.dateTo).setHours(23, 59, 59, 999))); if (filters.locationType) hist = hist.filter(o => o.location.type === filters.locationType);
+            dom.historyTableBody.innerHTML=''; dom.noHistoryMessage.classList.toggle('hidden',hist.length>0); dom.historyTableBody.parentElement.parentElement.classList.toggle('hidden',hist.length===0);
+            hist.sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).forEach(o=>{const tot=o.items.reduce((s,i)=>s+(i.price*i.quantity),0);const r=document.createElement('tr');r.innerHTML=`<td class="px-4 py-3 text-sm">${new Date(o.timestamp).toLocaleString()}</td><td class="px-4 py-3 text-sm">${o.location.type==='table'?'T':'O'} ${o.location.number}</td><td class="px-4 py-3 text-sm">${o.items.map(i=>`${i.quantity}x ${i.name}`).join(', ')}</td><td class="px-4 py-3 text-sm">${o.area}</td><td class="px-4 py-3 text-sm">${formatCurrency(tot)}</td><td class="px-4 py-3 text-sm"><span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">${o.status}</span></td><td class="px-4 py-3 text-sm">${o.notes||'-'}</td>`;dom.historyTableBody.appendChild(r);});
+            const totalRev = hist.reduce((s,o)=>s+o.items.reduce((s2,i)=>s2+(i.price*i.quantity),0),0); dom.totalOrdersCount.textContent=hist.length; dom.totalRevenue.textContent=formatCurrency(totalRev); dom.avgOrderValue.textContent=hist.length>0?formatCurrency(Math.round(totalRev/hist.length)):formatCurrency(0);
+            const pCounts={}; hist.flatMap(o=>o.items).forEach(i=>{pCounts[i.name]=(pCounts[i.name]||0)+i.quantity;}); const top=Object.entries(pCounts).sort((a,b)=>b[1]-a[1])[0]; dom.topProduct.textContent=top?top[0]:'-';
+        };
+        const renderAdminQrCodes = () => {
+            if (typeof QRCode === 'undefined') { dom.qrCodesTables.innerHTML = `<p class="text-red-500">Errore libreria QR.</p>`; return; }
+            const gen = (type, count, container) => { container.innerHTML=''; for(let i=1;i<=count;i++){const qrCont=document.createElement('div');qrCont.className='qr-container';qrCont.innerHTML=`<p class="font-semibold mb-2">${type==='table'?'Tavolo':'Ombrellone'} ${i}</p><div class="inline-block"></div>`;container.appendChild(qrCont);new QRCode(qrCont.querySelector('div'),{text:`${type}:${i}`,width:128,height:128});}};
+            gen('table', state.settings.tableCount, dom.qrCodesTables); gen('umbrella', state.settings.umbrellaCount, dom.qrCodesUmbrellas);
+        };
+        const exportHistoryToCsv = () => {
+            let csv="Data,Ora,Location,Prodotti,Quantita,Prezzo Totale,Area,Note\n";
+            state.orderHistory.forEach(o=>{const d=new Date(o.timestamp);const tot=o.items.reduce((s,i)=>s+(i.price*i.quantity),0);csv+=`${d.toLocaleDateString()},${d.toLocaleTimeString()},${o.location.type} ${o.location.number},"${o.items.map(i=>i.name).join('|')}","${o.items.map(i=>i.quantity).join('|')}",${tot},${o.area},"${o.notes||''}"\n`;});
+            const link=document.createElement("a"); link.href='data:text/csv;charset=utf-8,'+encodeURI(csv); link.download="storico_ordini.csv"; link.click();
+        };
+
+        const setupEventListeners = () => {
+            dom.adminBtn.onclick = () => { renderAdmin(); toggleModal('adminModal', true); };
+            dom.scanBtn.onclick = () => switchView('scanner');
+            dom.cartBtn.onclick = () => { renderCart(); toggleModal('cartModal', true); };
+            dom.changeLocationBtn.onclick = () => switchView('location');
+            dom.tableTab.onclick = () => { renderLocations('table'); dom.tableTab.classList.add('text-sky-600','border-sky-500'); dom.umbrellaTab.classList.remove('text-sky-600','border-sky-500'); };
+            dom.umbrellaTab.onclick = () => { renderLocations('umbrella'); dom.umbrellaTab.classList.add('text-sky-600','border-sky-500'); dom.tableTab.classList.remove('text-sky-600','border-sky-500'); };
+            dom.scanLocationBtn.onclick = () => switchView('scanner');
+            dom.closeScannerBtn.onclick = () => switchView('location');
+            dom.startScanBtn.onclick = startScanner;
+            dom.uploadBtn.onclick = () => dom.fileInput.click();
+            dom.fileInput.onchange = (e) => { if (e.target.files.length) { new Html5Qrcode("qrReader").scanFile(e.target.files[0],true).then(decodedText => handleScannedData(decodedText)).catch(err=>showToast(`Errore scansione file: ${err}`,"error")); }};
+            dom.manualSubmitBtn.onclick = () => { const n=parseInt(dom.manualNumber.value); if(n>0) selectLocation(dom.manualType.value,n); };
+            dom.closeCartBtn.onclick = () => toggleModal('cartModal', false);
+            dom.sendOrderBtn.onclick = sendOrder;
+            dom.whatsappBtn.onclick = sendWhatsAppOrder;
+            dom.closeSuccessBtn.onclick = () => toggleModal('successModal', false);
+            dom.closeAdminBtn.onclick = () => toggleModal('adminModal', false);
+            dom.closeProductBtn.onclick = () => toggleModal('productModal', false);
+            dom.closeCategoryBtn.onclick = () => toggleModal('categoryModal', false);
+            dom.confirmCancelBtn.onclick = () => toggleModal('confirmationModal', false);
+            dom.confirmOkBtn.onclick = () => { if (state.confirmationCallback) state.confirmationCallback(); toggleModal('confirmationModal', false); state.confirmationCallback = null; };
+            dom.adminTabs.forEach(tab => tab.onclick = () => {
+                const tabId = tab.dataset.tab;
+                dom.adminTabs.forEach(t=>{t.classList.replace('text-sky-600','text-gray-500'); t.classList.remove('border-sky-500');});
+                tab.classList.replace('text-gray-500','text-sky-600'); tab.classList.add('border-sky-500');
+                dom.adminTabContents.forEach(c => c.classList.add('hidden'));
+                document.getElementById(tabId).classList.remove('hidden');
+                if (tabId === 'qrCodeTab') { renderAdminQrCodes(); }
+            });
+            dom.orderTypeTabs.forEach(tab => tab.onclick = () => {
+                dom.orderTypeTabs.forEach(t=>{t.classList.replace('text-sky-600','text-gray-500');t.classList.remove('border-sky-500');});
+                tab.classList.replace('text-gray-500','text-sky-600');tab.classList.add('border-sky-500');
+                dom.orderTypeContents.forEach(c=>c.classList.add('hidden'));
+                document.getElementById(`ordersList${tab.dataset.subtab.charAt(0).toUpperCase()+tab.dataset.subtab.slice(1)}`).classList.remove('hidden');
+            });
+            dom.saveSettingsBtn.onclick = saveAdminSettings;
+            dom.addProductBtn.onclick = () => openProductModal();
+            dom.addCategoryBtn.onclick = () => openCategoryModal();
+            dom.searchBtn.onclick = () => searchTable(dom.searchType.value, parseInt(dom.searchNumber.value));
+            dom.applyFiltersBtn.onclick = () => renderAdminHistory({dateFrom:dom.dateFrom.value, dateTo:dom.dateTo.value, locationType:dom.locationTypeFilter.value});
+            dom.exportCsvBtn.onclick = exportHistoryToCsv;
+            dom.clearHistoryBtn.onclick = () => showConfirmation('Cancella Storico', 'Sei sicuro di voler cancellare TUTTO lo storico? L\'azione è irreversibile.', () => { state.orderHistory=[]; saveData(); renderAdminHistory(); showToast('Storico cancellato.'); });
+            dom.printQrBtn.onclick = () => window.print();
+            dom.saveProductBtn.onclick = saveProduct;
+            dom.saveCategoryBtn.onclick = saveCategory;
+        };
+
+        const init = () => {
+            loadData();
+            setupEventListeners();
+            render();
+        };
+
+        init();
+    });
+    </script>
+</body>
+</html>
